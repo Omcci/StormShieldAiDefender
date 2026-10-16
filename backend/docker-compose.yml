@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=stormshieldai_db
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d stormshieldai_db"]
+      interval: 10s # Un peu plus rapide au démarrage
+      timeout: 5s
+      retries: 5
+    # ◄ CORRECTION ICI : Syntaxe correcte pour modifier la configuration au lancement
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=20", "-c", "effective_cache_size=128MB"]
+
+  adminer:
+      image: adminer:latest
+      restart: always
+      ports:
+        - "8081:8080" # Note : Le port interne d'adminer est 8080 par défaut, tu peux l'exposer sur 8081
+      depends_on:
+        db:
+          condition: service_healthy # Attend que la BDD soit vraiment prête
+      environment:
+        - ADMINER_DEFAULT_SYSTEM=pgsql
