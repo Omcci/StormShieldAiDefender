@@ -1,0 +1,166 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  ANALYST
+  AUDITOR
+}
+
+enum ThreatSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ActionType {
+  BLOCK_IP
+  CREATE_RULE
+  ISOLATE_HOST
+  REMOVE_RULE
+}
+
+enum ActionStatus {
+  PENDING
+  APPLIED
+  FAILED
+  ROLLED_BACK
+}
+
+enum RuleSource {
+  MANUAL
+  AI_AUTOMATIC
+  AI_PROPOSED
+}
+
+model User {
+  id          String   @id @default(uuid()) @db.Uuid
+  email       String   @unique @db.VarChar(255)
+  passwordHash String  @map("password_hash") @db.VarChar(255)
+  fullName    String?  @map("full_name") @db.VarChar(100)
+  role        UserRole @default(ANALYST)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  actionAuditLogs ActionAuditLog[]
+
+  @@map("users")
+}
+
+model StormshieldAppliance {
+  id                       String    @id @default(uuid()) @db.Uuid
+  name                     String    @db.VarChar(100)
+  ipAddress                String    @map("ip_address") @db.Inet
+  apiPort                  Int       @default(443) @map("api_port")
+  encryptedApiKey          String    @map("encrypted_api_key")
+  isAutoMitigationEnabled  Boolean   @default(false) @map("is_auto_mitigation_enabled")
+  threatThresholdAutoBlock Int       @default(85) @map("threat_threshold_auto_block")
+  status                   String    @default("CONNECTED") @db.VarChar(50)
+  lastPing                 DateTime? @map("last_ping")
+  createdAt                DateTime  @default(now()) @map("created_at")
+
+  rawLogs       RawLog[]
+  threatAlerts  ThreatAlert[]
+  firewallRules  FirewallRule[]
+
+  @@map("stormshield_appliances")
+}
+
+model RawLog {
+  id          String    @id @default(uuid()) @db.Uuid
+  timestamp   DateTime
+  applianceId String?   @map("appliance_id") @db.Uuid
+  logType     String    @map("log_type") @db.VarChar(50)
+  srcIp       String?   @map("src_ip") @db.Inet
+  srcPort     Int?      @map("src_port")
+  dstIp       String?   @map("dst_ip") @db.Inet
+  dstPort     Int?      @map("dst_port")
+  protocol    String?   @db.VarChar(20)
+  actionTaken String?   @map("action_taken") @db.VarChar(50)
+  rawMessage  String    @map("raw_message")
+
+  appliance   StormshieldAppliance? @relation(fields: [applianceId], references: [id], onDelete: Cascade)
+
+  @@index([srcIp, timestamp(sort: Desc)])
+  @@index([timestamp(sort: Desc)])
+  @@map("raw_logs")
+}
+
+model ThreatAlert {
+  id            String         @id @default(uuid()) @db.Uuid
+  applianceId   String?        @map("appliance_id") @db.Uuid
+  title         String         @db.VarChar(255)
+  description   String?
+  severity      ThreatSeverity
+  dangerScore   Int?           @map("danger_score")
+  attackerIp    String?        @map("attacker_ip") @db.Inet
+  targetIp      String?        @map("target_ip") @db.Inet
+  rawLogsCount  Int            @default(1) @map("raw_logs_count")
+  aiExplanation Json?          @map("ai_explanation")
+  isResolved    Boolean        @default(false) @map("is_resolved")
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  appliance    StormshieldAppliance? @relation(fields: [applianceId], references: [id], onDelete: SetNull)
+  firewallRules FirewallRule[]
+  alertLogs    AlertLogMapping[]
+
+  @@index([dangerScore(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("threat_alerts")
+}
+
+model AlertLogMapping {
+  alertId      String   @map("alert_id") @db.Uuid
+  logTimestamp DateTime @map("log_timestamp")
+
+  alert ThreatAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@id([alertId, logTimestamp])
+  @@map("alert_logs_mapping")
+}
+
+model FirewallRule {
+  id                String        @id @default(uuid()) @db.Uuid
+  applianceId       String?       @map("appliance_id") @db.Uuid
+  alertId           String?       @map("alert_id") @db.Uuid
+  stormshieldRuleId String?       @map("stormshield_rule_id") @db.VarChar(100)
+  action            ActionType
+  sourceIp          String?       @map("source_ip") @db.Inet
+  destinationIp     String?       @map("destination_ip") @db.Inet
+  ruleSource        RuleSource    @map("rule_source")
+  status            ActionStatus  @default(PENDING)
+  appliedAt         DateTime?     @map("applied_at")
+  expiresAt         DateTime?     @map("expires_at")
+  createdAt         DateTime      @default(now()) @map("created_at")
+
+  appliance         StormshieldAppliance? @relation(fields: [applianceId], references: [id], onDelete: SetNull)
+  alert             ThreatAlert?          @relation(fields: [alertId], references: [id], onDelete: SetNull)
+  auditLogs         ActionAuditLog[]
+
+  @@index([status])
+  @@map("firewall_rules")
+}
+
+model ActionAuditLog {
+  id              String       @id @default(uuid()) @db.Uuid
+  ruleId          String?      @map("rule_id") @db.Uuid
+  executedByUser  String?      @map("executed_by_user") @db.Uuid
+  actionType      ActionType   @map("action_type")
+  executedAt      DateTime     @default(now()) @map("executed_at")
+  isAutomated     Boolean      @default(false) @map("is_automated")
+  statusResult    ActionStatus @map("status_result")
+  executionDetails Json?        @map("execution_details")
+
+  rule       FirewallRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  executedBy User?         @relation(fields: [executedByUser], references: [id], onDelete: SetNull)
+
+  @@map("action_audit_logs")
+}
